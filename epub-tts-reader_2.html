@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EPUB Reader · TTS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Cinzel:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --ink: #1a1410;
+    --paper: #f5f0e8;
+    --paper-dark: #ede6d6;
+    --amber: #c8860a;
+    --amber-light: #e8a820;
+    --rust: #8b3a2a;
+    --muted: #8a7e6e;
+    --highlight-bg: #f0c040;
+    --highlight-fg: #1a1410;
+    --border: #c8b89a;
+    --shadow: rgba(26,20,16,0.15);
+    --panel-bg: #2a1f14;
+    --panel-fg: #e8dcc8;
+    --panel-muted: #8a7a64;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'EB Garamond', Georgia, serif;
+    background: var(--paper);
+    color: var(--ink);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 260px 1fr;
+    grid-template-areas:
+      "header header"
+      "sidebar content"
+      "player player";
+  }
+
+  /* ── HEADER ── */
+  header {
+    grid-area: header;
+    background: var(--panel-bg);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 2px solid var(--amber);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo {
+    font-family: 'Cinzel', serif;
+    font-size: 1.15rem;
+    color: var(--amber-light);
+    letter-spacing: 0.08em;
+    flex-shrink: 0;
+  }
+  .logo span { color: var(--panel-muted); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; }
+
+  .file-zone {
+    display: flex; align-items: center; gap: 10px;
+    margin-left: auto;
+  }
+  #file-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--panel-muted);
+    max-width: 240px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .btn-upload {
+    font-family: 'Cinzel', serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid var(--amber);
+    color: var(--amber-light);
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+  .btn-upload:hover { background: var(--amber); color: var(--panel-bg); }
+  #file-input { display: none; }
+
+  /* ── SIDEBAR ── */
+  #sidebar {
+    grid-area: sidebar;
+    background: var(--paper-dark);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+  }
+  .sidebar-title {
+    font-family: 'Cinzel', serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 14px 18px 8px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0;
+    background: var(--paper-dark);
+    z-index: 10;
+  }
+  #toc-list { list-style: none; padding: 6px 0; }
+  #toc-list li a {
+    display: block;
+    padding: 8px 18px;
+    font-size: 0.88rem;
+    color: var(--ink);
+    text-decoration: none;
+    line-height: 1.4;
+    transition: background 0.15s, color 0.15s;
+    border-left: 3px solid transparent;
+  }
+  #toc-list li a:hover { background: rgba(200,134,10,0.1); }
+  #toc-list li.active a {
+    border-left-color: var(--amber);
+    color: var(--amber);
+    background: rgba(200,134,10,0.08);
+    font-weight: 500;
+  }
+  .toc-index {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-right: 6px;
+  }
+
+  /* ── CONTENT ── */
+  #content {
+    grid-area: content;
+    overflow-y: auto;
+    padding: 48px 64px 80px;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  #drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    text-align: center;
+    gap: 16px;
+    border: 2px dashed var(--border);
+    border-radius: 4px;
+    padding: 48px;
+    margin-top: 24px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.drag-over { border-color: var(--amber); background: rgba(200,134,10,0.05); }
+  .drop-icon { font-size: 3rem; color: var(--border); line-height: 1; }
+  .drop-title {
+    font-family: 'Cinzel', serif;
+    font-size: 1.2rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .drop-sub { font-size: 0.88rem; color: var(--muted); }
+
+  #reader-text {
+    display: none;
+    font-size: 1.12rem;
+    line-height: 1.9;
+    color: var(--ink);
+  }
+  #reader-text h1, #reader-text h2, #reader-text h3 {
+    font-family: 'Cinzel', serif;
+    font-weight: 600;
+    color: var(--rust);
+    margin: 1.6em 0 0.7em;
+    letter-spacing: 0.03em;
+    line-height: 1.3;
+  }
+  #reader-text h1 { font-size: 1.6rem; }
+  #reader-text h2 { font-size: 1.28rem; }
+  #reader-text h3 { font-size: 1.05rem; }
+  #reader-text p { margin-bottom: 1em; }
+  #reader-text em { font-style: italic; }
+  #reader-text strong { font-weight: 600; color: var(--rust); }
+
+  .sentence {
+    border-radius: 2px;
+    transition: background 0.2s, color 0.2s;
+    cursor: pointer;
+  }
+  .sentence:hover { background: rgba(200,134,10,0.12); }
+  .sentence.active {
+    background: var(--highlight-bg);
+    color: var(--highlight-fg);
+    border-radius: 2px;
+  }
+
+  /* ── PLAYER ── */
+  #player {
+    grid-area: player;
+    background: var(--panel-bg);
+    border-top: 2px solid var(--amber);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    position: sticky; bottom: 0; z-index: 100;
+  }
+
+  .controls { display: flex; align-items: center; gap: 8px; }
+
+  .btn-ctrl {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1.5px solid var(--panel-muted);
+    color: var(--panel-fg);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-ctrl:hover { border-color: var(--amber); color: var(--amber); }
+  .btn-ctrl:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn-ctrl.play-pause {
+    width: 48px; height: 48px;
+    background: var(--amber);
+    border-color: var(--amber);
+    color: var(--panel-bg);
+    font-size: 1.15rem;
+  }
+  .btn-ctrl.play-pause:hover { background: var(--amber-light); border-color: var(--amber-light); }
+
+  .progress-section {
+    flex: 1; min-width: 200px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .progress-info {
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .progress-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--panel-muted);
+  }
+  .progress-track {
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    position: relative;
+    cursor: pointer;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--amber);
+    border-radius: 2px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+
+  .settings { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+
+  .setting-group { display: flex; flex-direction: column; gap: 3px; }
+  .setting-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--panel-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .setting-group select, .setting-group input[type=range] {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--panel-fg);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 4px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    outline: none;
+    max-width: 160px;
+  }
+  .setting-group select:focus { border-color: var(--amber); }
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 90px; height: 4px;
+    background: rgba(255,255,255,0.15);
+    border: none !important;
+    padding: 0 !important;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--amber);
+    cursor: pointer;
+  }
+  .speed-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--amber-light);
+    min-width: 28px;
+    text-align: right;
+  }
+
+  /* Loading */
+  #loading {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(26,20,16,0.7);
+    z-index: 999;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 16px;
+  }
+  #loading.show { display: flex; }
+  .loader-ring {
+    width: 48px; height: 48px;
+    border: 3px solid rgba(200,134,10,0.2);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loader-text {
+    font-family: 'Cinzel', serif;
+    font-size: 0.85rem;
+    color: var(--amber-light);
+    letter-spacing: 0.1em;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    body { grid-template-columns: 1fr; grid-template-areas: "header" "content" "player"; }
+    #sidebar { display: none; }
+    #content { padding: 24px 20px 80px; }
+    header { flex-wrap: wrap; }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="loader-ring"></div>
+  <div class="loader-text">Đang tải sách...</div>
+</div>
+
+<header>
+  <div class="logo">
+    ᴱᴾᵁᴮ<br>
+    <span>// TTS READER</span>
+  </div>
+  <div class="file-zone">
+    <span id="file-name">Chưa có file nào được chọn</span>
+    <button class="btn-upload" onclick="document.getElementById('file-input').click()">
+      Mở EPUB
+    </button>
+    <input type="file" id="file-input" accept=".epub">
+  </div>
+</header>
+
+<nav id="sidebar">
+  <div class="sidebar-title">Mục lục</div>
+  <ul id="toc-list">
+    <li style="padding:24px 18px;color:var(--muted);font-size:0.85rem;font-style:italic;">
+      Mở file EPUB để xem mục lục
+    </li>
+  </ul>
+</nav>
+
+<main id="content">
+  <!-- Banner cảnh báo nếu đang chạy trong iframe (Claude.ai) -->
+  <div id="iframe-warn" style="display:none;background:#3a1a0a;border:1px solid #c8860a;border-radius:4px;padding:14px 18px;margin-bottom:18px;font-size:0.88rem;line-height:1.6;color:#e8dcc8;">
+    <strong style="color:#e8a820;">⚠️ Đang chạy trong Claude.ai</strong><br>
+    Web Speech API bị giới hạn trong môi trường này. Để dùng đầy đủ giọng Siri:<br>
+    <strong style="color:#e8a820;">Tải file về → mở bằng Safari</strong> (xem hướng dẫn bên dưới).
+    <button onclick="this.parentElement.style.display='none'" style="float:right;background:transparent;border:1px solid #8a7a64;color:#8a7a64;padding:2px 10px;cursor:pointer;border-radius:2px;font-size:0.75rem;">✕</button>
+  </div>
+
+  <div id="drop-zone">
+    <div class="drop-icon">📖</div>
+    <div class="drop-title">Kéo thả file EPUB vào đây</div>
+    <div class="drop-sub">hoặc nhấn "Mở EPUB" ở góc trên bên phải</div>
+
+    <!-- Hướng dẫn iOS -->
+    <div id="ios-guide" style="display:none;margin-top:28px;text-align:left;width:100%;max-width:480px;border-top:1px solid var(--border);padding-top:20px;">
+      <div style="font-family:'Cinzel',serif;font-size:0.75rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;">
+        📱 Hướng dẫn dùng trên iPhone / iPad
+      </div>
+
+      <div style="font-size:0.85rem;line-height:1.8;color:var(--ink);">
+
+        <div style="margin-bottom:16px;">
+          <div style="font-weight:600;color:var(--rust);margin-bottom:4px;">Bước 1 — Tải file về iPhone</div>
+          <div style="color:var(--muted);font-size:0.82rem;">
+            Trong Claude.ai → nhấn vào file <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:2px;">epub-tts-reader.html</code>
+            → nhấn nút <strong>tải xuống ↓</strong> → file lưu vào <strong>Tệp &gt; Tải về</strong>
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="font-weight:600;color:var(--rust);margin-bottom:4px;">Bước 2 — Mở bằng Safari</div>
+          <div style="color:var(--muted);font-size:0.82rem;">
+            App <strong>Tệp</strong> không có nút "Mở trong Safari" trực tiếp.<br>
+            Làm theo một trong hai cách sau:<br><br>
+            <strong>Cách A (nhanh nhất):</strong><br>
+            Mở app <strong>Tệp</strong> → tìm file <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:2px;">epub-tts-reader.html</code>
+            → nhấn giữ file → chọn <strong>"Chia sẻ"</strong>
+            → kéo xuống tìm biểu tượng <strong>Safari</strong> → nhấn vào<br><br>
+            <strong>Cách B (nếu không thấy Safari trong Chia sẻ):</strong><br>
+            Mở app <strong>Tệp</strong> → nhấn giữ file → chọn <strong>"Sao chép"</strong>
+            → mở <strong>Safari</strong> → thanh địa chỉ gõ <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:2px;">file://</code>
+            → Safari sẽ hỏi vị trí, dán đường dẫn vào<br><br>
+            <strong>Cách C (đơn giản nhất):</strong><br>
+            Mở <strong>Safari</strong> trước → nhấn vào thanh địa chỉ
+            → nhấn biểu tượng 📎 hoặc chọn <strong>"Tệp"</strong> bên dưới bàn phím
+            → duyệt đến file <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:2px;">epub-tts-reader.html</code> → nhấn mở<br><br>
+            <em>⚠️ Không dùng Chrome trên iOS — Chrome không có giọng Siri tiếng Việt</em>
+          </div>
+        </div>
+
+        <div style="margin-bottom:16px;">
+          <div style="font-weight:600;color:var(--rust);margin-bottom:4px;">Bước 3 — Bật giọng tiếng Việt cho Siri</div>
+          <div style="color:var(--muted);font-size:0.82rem;">
+            Nếu dropdown "Giọng đọc" không có tiếng Việt:<br>
+            <strong>Cài đặt</strong> → <strong>Trợ năng</strong> → <strong>Nội dung đọc</strong>
+            → <strong>Giọng nói</strong> → <strong>Tiếng Việt</strong> → tải giọng về<br>
+            <em>Hoặc: Cài đặt → Siri &amp; Tìm kiếm → Ngôn ngữ → Tiếng Việt</em>
+          </div>
+        </div>
+
+        <div style="margin-bottom:4px;">
+          <div style="font-weight:600;color:var(--rust);margin-bottom:4px;">Bước 4 — Lần đầu mở trang</div>
+          <div style="color:var(--muted);font-size:0.82rem;">
+            Safari cần 1 lần chạm để kích hoạt giọng nói.<br>
+            Chỉ cần <strong>nhấn vào bất kỳ đâu trên trang</strong> →
+            dropdown sẽ tự điền giọng Siri tiếng Việt.
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <!-- /ios-guide -->
+
+  </div>
+  <div id="reader-text"></div>
+</main>
+
+<footer id="player">
+  <div class="controls">
+    <button class="btn-ctrl" id="btn-prev" title="Chương trước" disabled>&#8249;</button>
+    <button class="btn-ctrl play-pause" id="btn-play" title="Phát / Dừng" disabled>▶</button>
+    <button class="btn-ctrl" id="btn-stop" title="Dừng hẳn" disabled>&#9632;</button>
+    <button class="btn-ctrl" id="btn-next" title="Chương tiếp" disabled>&#8250;</button>
+  </div>
+
+  <div class="progress-section">
+    <div class="progress-info">
+      <span class="progress-label" id="chapter-label">—</span>
+      <span class="progress-label" id="sentence-label">0 / 0</span>
+    </div>
+    <div class="progress-track" id="progress-track">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+  </div>
+
+  <div class="settings">
+    <div class="setting-group">
+      <span class="setting-label">Tốc độ</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="range" id="rate-slider" min="0.5" max="4" step="0.1" value="1.5">
+        <span class="speed-val" id="rate-val">1.5×</span>
+      </div>
+    </div>
+    <div class="setting-group">
+      <span class="setting-label">Giọng đọc</span>
+      <select id="voice-select">
+        <option value="">-- Đang tải --</option>
+      </select>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════
+const state = {
+  chapters: [],       // [{title, id, content (html string)}]
+  chapterIndex: 0,
+  sentences: [],      // flat array of strings for current chapter
+  sentenceIndex: 0,
+  isPlaying: false,
+  voices: [],
+  selectedVoice: null,
+  rate: 1.5,
+  utterance: null,
+  bookId: null,       // hash of filename for localStorage key
+};
+
+// ══════════════════════════════════════════════════════════
+//  DOM REFS
+// ══════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const fileInput   = $('file-input');
+const dropZone    = $('drop-zone');
+const readerText  = $('reader-text');
+const tocList     = $('toc-list');
+const btnPlay     = $('btn-play');
+const btnStop     = $('btn-stop');
+const btnPrev     = $('btn-prev');
+const btnNext     = $('btn-next');
+const rateSlider  = $('rate-slider');
+const rateVal     = $('rate-val');
+const voiceSelect = $('voice-select');
+const chapterLabel  = $('chapter-label');
+const sentenceLabel = $('sentence-label');
+const progressFill  = $('progress-fill');
+const loading       = $('loading');
+
+// ══════════════════════════════════════════════════════════
+//  VOICES  (iOS-safe: retry sau user gesture)
+// ══════════════════════════════════════════════════════════
+
+// iOS Safari chỉ populate getVoices() sau lần user interaction đầu tiên.
+// Giải pháp: retry polling tối đa 20 lần × 200ms sau mỗi gesture.
+let voiceRetryTimer = null;
+let voicesLoaded = false;
+
+function populateVoiceList(all) {
+  if (!all.length) return false;
+  voicesLoaded = true;
+
+  // Lưu lại giọng đang chọn (nếu có) để restore
+  const prevURI = state.selectedVoice?.voiceURI || voiceSelect.value;
+
+  state.voices = all;
+  voiceSelect.innerHTML = '';
+
+  // Sort: Vietnamese first
+  const vi   = all.filter(v => v.lang.startsWith('vi'));
+  const rest = all.filter(v => !v.lang.startsWith('vi'));
+  const sorted = [...vi, ...rest];
+
+  sorted.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.voiceURI;
+    // Hiển thị tên gọn hơn: bỏ prefix "com.apple.speech..." trên iOS
+    const shortName = v.name.replace(/^com\.\w+\.\w+\./, '').replace(/TTS$/, '').trim();
+    opt.textContent = `${v.lang} · ${shortName}`;
+    if (v.lang.startsWith('vi')) opt.style.fontWeight = '600';
+    voiceSelect.appendChild(opt);
+  });
+
+  // Restore selection hoặc auto-chọn giọng Việt
+  const restore = sorted.find(v => v.voiceURI === prevURI);
+  const firstVi = sorted.find(v => v.lang.startsWith('vi'));
+  const pick    = restore || firstVi || sorted[0];
+  if (pick) {
+    voiceSelect.value    = pick.voiceURI;
+    state.selectedVoice  = pick;
+  }
+  return true;
+}
+
+function tryLoadVoices() {
+  const all = speechSynthesis.getVoices();
+  if (populateVoiceList(all)) {
+    clearInterval(voiceRetryTimer);
+    voiceRetryTimer = null;
+    return;
+  }
+  // Vẫn rỗng — iOS chưa sẵn sàng, sẽ retry qua timer
+}
+
+// Cách 1: event onvoiceschanged (Chrome, Edge, mới iOS)
+if ('onvoiceschanged' in speechSynthesis) {
+  speechSynthesis.onvoiceschanged = () => {
+    tryLoadVoices();
+  };
+}
+
+// Cách 2: thử ngay lúc load (desktop thường có ngay)
+tryLoadVoices();
+
+// Cách 3: iOS — bắt đầu retry polling khi có gesture đầu tiên
+// (touchstart bắt được sớm nhất, trước cả click)
+function iosVoiceBootstrap() {
+  if (voicesLoaded) return;
+  if (voiceRetryTimer) return;
+  let attempts = 0;
+  voiceRetryTimer = setInterval(() => {
+    attempts++;
+    tryLoadVoices();
+    if (voicesLoaded || attempts >= 25) {
+      clearInterval(voiceRetryTimer);
+      voiceRetryTimer = null;
+      if (!voicesLoaded) {
+        // Sau 5 giây vẫn không có → báo người dùng
+        voiceSelect.innerHTML = '<option value="">Không tìm thấy giọng đọc</option>';
+      }
+    }
+  }, 200);
+}
+
+// Lắng nghe gesture đầu tiên trên toàn trang
+['touchstart', 'touchend', 'click', 'pointerdown'].forEach(evt => {
+  document.addEventListener(evt, iosVoiceBootstrap, { once: false, passive: true });
+});
+
+// iOS yêu cầu "unlock" Web Speech bằng speak() trong gesture đầu tiên.
+// Phát utterance im lặng (khoảng trắng) để mở khóa audio context.
+let iosUnlocked = false;
+function iosUnlockSpeech() {
+  if (iosUnlocked) return;
+  iosUnlocked = true;
+  const u = new SpeechSynthesisUtterance(' ');
+  u.volume = 0;
+  speechSynthesis.speak(u);
+  // Sau unlock, voices thường sẵn sàng
+  setTimeout(tryLoadVoices, 100);
+  setTimeout(tryLoadVoices, 500);
+}
+document.addEventListener('touchstart', iosUnlockSpeech, { once: true, passive: true });
+document.addEventListener('click',      iosUnlockSpeech, { once: true, passive: true });
+
+voiceSelect.addEventListener('change', () => {
+  state.selectedVoice = state.voices.find(v => v.voiceURI === voiceSelect.value) || null;
+});
+
+// ══════════════════════════════════════════════════════════
+//  FILE LOADING
+// ══════════════════════════════════════════════════════════
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+// Allow drop on whole content area
+$('content').addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+$('content').addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+
+async function handleFile(file) {
+  if (!file.name.endsWith('.epub')) {
+    alert('Vui lòng chọn file .epub');
+    return;
+  }
+  $('file-name').textContent = file.name;
+  state.bookId = sanitizeKey(file.name);
+  loading.classList.add('show');
+
+  try {
+    const ab = await file.arrayBuffer();
+    await parseEpub(ab);
+  } catch(err) {
+    console.error(err);
+    alert('Lỗi đọc file EPUB: ' + err.message);
+  } finally {
+    loading.classList.remove('show');
+  }
+}
+
+function sanitizeKey(s) {
+  return 'epub_' + s.replace(/[^a-zA-Z0-9]/g,'_');
+}
+
+// ══════════════════════════════════════════════════════════
+//  EPUB PARSER
+// ══════════════════════════════════════════════════════════
+async function parseEpub(arrayBuffer) {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+
+  // 1. Find container.xml -> OPF path
+  const containerXml = await zip.file('META-INF/container.xml').async('string');
+  const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+  const rootfilePath = containerDoc.querySelector('rootfile')?.getAttribute('full-path');
+  if (!rootfilePath) throw new Error('Không tìm thấy rootfile trong EPUB');
+
+  // 2. Parse OPF
+  const opfStr  = await zip.file(rootfilePath).async('string');
+  const opfDoc  = new DOMParser().parseFromString(opfStr, 'application/xml');
+  const opfBase = rootfilePath.includes('/') ? rootfilePath.split('/').slice(0,-1).join('/') + '/' : '';
+
+  // 3. Build id→href manifest map
+  const manifestMap = {};
+  opfDoc.querySelectorAll('manifest item').forEach(item => {
+    manifestMap[item.getAttribute('id')] = {
+      href: item.getAttribute('href'),
+      type: item.getAttribute('media-type')
+    };
+  });
+
+  // 4. Spine order
+  const spineIds = [];
+  opfDoc.querySelectorAll('spine itemref').forEach(ref => {
+    spineIds.push(ref.getAttribute('idref'));
+  });
+
+  // 5. NCX / Nav TOC (best-effort)
+  const tocTitles = {};
+  try {
+    const ncxId  = opfDoc.querySelector('spine')?.getAttribute('toc');
+    const navId  = opfDoc.querySelector('manifest item[properties*="nav"]')?.getAttribute('id');
+
+    if (navId && manifestMap[navId]) {
+      const navPath = opfBase + manifestMap[navId].href;
+      const navStr  = await zip.file(navPath)?.async('string');
+      if (navStr) {
+        const navDoc = new DOMParser().parseFromString(navStr, 'application/xhtml+xml');
+        navDoc.querySelectorAll('nav[epub\\:type="toc"] a, nav a').forEach(a => {
+          const href = a.getAttribute('href')?.split('#')[0];
+          if (href) tocTitles[href] = a.textContent.trim();
+        });
+      }
+    }
+
+    if (ncxId && manifestMap[ncxId]) {
+      const ncxPath = opfBase + manifestMap[ncxId].href;
+      const ncxStr  = await zip.file(ncxPath)?.async('string');
+      if (ncxStr) {
+        const ncxDoc = new DOMParser().parseFromString(ncxStr, 'application/xml');
+        ncxDoc.querySelectorAll('navPoint').forEach(np => {
+          const src = np.querySelector('content')?.getAttribute('src')?.split('#')[0];
+          const lbl = np.querySelector('navLabel text')?.textContent.trim();
+          if (src && lbl) tocTitles[src] = lbl;
+        });
+      }
+    }
+  } catch(e) { /* TOC parse failed, will use fallback titles */ }
+
+  // 6. Load chapter content
+  const chapters = [];
+  for (const id of spineIds) {
+    const item = manifestMap[id];
+    if (!item) continue;
+    if (!item.type?.includes('html') && !item.type?.includes('xhtml') && !item.type?.includes('xml')) continue;
+
+    const fullPath = opfBase + item.href;
+    try {
+      const htmlStr = await zip.file(fullPath)?.async('string');
+      if (!htmlStr) continue;
+
+      const doc = new DOMParser().parseFromString(htmlStr, 'application/xhtml+xml');
+      // Remove scripts / style
+      doc.querySelectorAll('script,style,link').forEach(el => el.remove());
+
+      const bodyEl  = doc.querySelector('body') || doc.documentElement;
+      const rawHtml = bodyEl.innerHTML;
+      const textLen = bodyEl.textContent.trim().length;
+      if (textLen < 30) continue; // skip near-empty
+
+      const titleFromToc = tocTitles[item.href] || tocTitles[item.href.split('/').pop()] || null;
+      // Try to extract h1/h2 from content
+      const h = bodyEl.querySelector('h1,h2,h3');
+      const title = titleFromToc || h?.textContent.trim() || `Chương ${chapters.length + 1}`;
+
+      chapters.push({ id, href: item.href, title, content: rawHtml });
+    } catch(e) { /* skip problem files */ }
+  }
+
+  if (chapters.length === 0) throw new Error('EPUB không có nội dung đọc được');
+
+  state.chapters = chapters;
+
+  // Restore progress or start fresh
+  const saved = loadProgress();
+  state.chapterIndex  = saved ? saved.chapterIndex  : 0;
+  state.sentenceIndex = saved ? saved.sentenceIndex : 0;
+
+  // Clamp
+  if (state.chapterIndex >= chapters.length) state.chapterIndex = 0;
+
+  renderTOC();
+  renderChapter(state.chapterIndex, state.sentenceIndex);
+  enableControls();
+}
+
+// ══════════════════════════════════════════════════════════
+//  TOC
+// ══════════════════════════════════════════════════════════
+function renderTOC() {
+  tocList.innerHTML = '';
+  state.chapters.forEach((ch, i) => {
+    const li = document.createElement('li');
+    li.dataset.idx = i;
+    li.innerHTML = `<a href="#"><span class="toc-index">${String(i+1).padStart(2,'0')}</span>${escapeHtml(ch.title)}</a>`;
+    li.addEventListener('click', e => {
+      e.preventDefault();
+      stopTTS();
+      state.chapterIndex  = i;
+      state.sentenceIndex = 0;
+      renderChapter(i, 0);
+      saveProgress();
+    });
+    tocList.appendChild(li);
+  });
+  updateTOCActive();
+}
+
+function updateTOCActive() {
+  tocList.querySelectorAll('li').forEach((li, i) => {
+    li.classList.toggle('active', i === state.chapterIndex);
+  });
+  const activeLi = tocList.querySelector('li.active');
+  if (activeLi) activeLi.scrollIntoView({ block: 'nearest' });
+}
+
+// ══════════════════════════════════════════════════════════
+//  CHAPTER RENDERING & SENTENCE SPLITTING
+// ══════════════════════════════════════════════════════════
+function renderChapter(idx, startSentence = 0) {
+  stopTTS();
+  state.chapterIndex  = idx;
+  state.sentenceIndex = startSentence;
+
+  const ch = state.chapters[idx];
+  chapterLabel.textContent = ch.title.length > 40 ? ch.title.slice(0,38)+'…' : ch.title;
+
+  // Parse HTML, extract text nodes, wrap sentences in spans
+  const parser = new DOMParser();
+  const doc    = parser.parseFromString(ch.content, 'application/xhtml+xml');
+
+  // Fallback for bad XML
+  const doc2 = doc.querySelector('parsererror')
+    ? parser.parseFromString(ch.content, 'text/html')
+    : doc;
+
+  const body = doc2.querySelector('body') || doc2.documentElement;
+  const sentences = [];
+
+  function processNode(node, outEl) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent;
+      // Split text node into sentences
+      const parts = splitSentences(text);
+      parts.forEach(part => {
+        if (part.trim()) {
+          const span = document.createElement('span');
+          span.className = 'sentence';
+          span.dataset.idx = sentences.length;
+          span.textContent = part;
+          span.addEventListener('click', () => jumpToSentence(+span.dataset.idx));
+          sentences.push(part);
+          outEl.appendChild(span);
+        } else {
+          outEl.appendChild(document.createTextNode(part));
+        }
+      });
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = node.tagName.toLowerCase();
+      let outChild;
+      if (['script','style','link','meta'].includes(tag)) return;
+      if (['p','div','section','article','blockquote','li','td','th','h1','h2','h3','h4','h5','h6'].includes(tag)) {
+        outChild = document.createElement(tag);
+        // copy class
+        if (node.className) outChild.className = node.className;
+        outEl.appendChild(outChild);
+        node.childNodes.forEach(n => processNode(n, outChild));
+      } else if (tag === 'br') {
+        outEl.appendChild(document.createElement('br'));
+      } else {
+        // inline — just pass through children to parent
+        node.childNodes.forEach(n => processNode(n, outEl));
+      }
+    }
+  }
+
+  const container = document.createElement('div');
+  body.childNodes.forEach(n => processNode(n, container));
+
+  state.sentences = sentences;
+
+  dropZone.style.display  = 'none';
+  readerText.style.display = 'block';
+  readerText.innerHTML = '';
+  readerText.appendChild(container);
+
+  updateSentenceUI();
+  updateTOCActive();
+
+  // Scroll to active sentence or top
+  if (startSentence > 0) {
+    const el = readerText.querySelector(`.sentence[data-idx="${startSentence}"]`);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  } else {
+    $('content').scrollTop = 0;
+  }
+
+  btnPrev.disabled = idx === 0;
+  btnNext.disabled = idx === state.chapters.length - 1;
+}
+
+// Vietnamese-aware sentence splitter
+function splitSentences(text) {
+  if (!text.trim()) return [text];
+  // Split on sentence-ending punctuation, keeping delimiter
+  const result = [];
+  // Regex: split after . ! ? … followed by space or end, not in abbreviations
+  const raw = text.split(/(?<=[.!?…\u2026])\s+/);
+  raw.forEach((s, i) => {
+    result.push(i < raw.length - 1 ? s + ' ' : s);
+  });
+  return result.length > 1 ? result : [text];
+}
+
+function jumpToSentence(idx) {
+  stopTTS();
+  state.sentenceIndex = idx;
+  updateSentenceUI();
+  saveProgress();
+}
+
+// ══════════════════════════════════════════════════════════
+//  TTS ENGINE  (chunk-based — gom câu để loại khoảng ngắt)
+// ══════════════════════════════════════════════════════════
+
+// Số câu gom thành 1 utterance. Lớn → ít gap, nhưng highlight
+// kém chính xác hơn trên browser cũ. 8 là điểm cân bằng tốt.
+const CHUNK_SIZE = 8;
+
+// Build chunk từ state.sentenceIndex, trả về {text, offsets}
+// offsets[i] = char index trong text nơi câu (sentenceIndex+i) bắt đầu
+function buildChunk(fromIdx) {
+  const sents = state.sentences;
+  const parts = [];
+  let charPos = 0;
+  const offsets = []; // [{sentIdx, start, end}]
+
+  for (let i = fromIdx; i < Math.min(fromIdx + CHUNK_SIZE, sents.length); i++) {
+    const s = sents[i];
+    if (!s?.trim()) continue;
+    offsets.push({ sentIdx: i, start: charPos, end: charPos + s.length });
+    parts.push(s);
+    charPos += s.length + 1; // +1 cho space separator
+  }
+
+  return { text: parts.join(' '), offsets };
+}
+
+function playFromCurrent() {
+  if (!state.isPlaying) return;
+
+  if (state.sentenceIndex >= state.sentences.length) {
+    // Chapter done → go next
+    if (state.chapterIndex < state.chapters.length - 1) {
+      state.chapterIndex++;
+      state.sentenceIndex = 0;
+      renderChapter(state.chapterIndex, 0);
+      saveProgress();
+      setTimeout(() => playFromCurrent(), 300);
+    } else {
+      stopTTS();
+    }
+    return;
+  }
+
+  // Skip blank sentences
+  while (state.sentenceIndex < state.sentences.length &&
+         !state.sentences[state.sentenceIndex]?.trim()) {
+    state.sentenceIndex++;
+  }
+  if (state.sentenceIndex >= state.sentences.length) {
+    playFromCurrent(); return;
+  }
+
+  const { text, offsets } = buildChunk(state.sentenceIndex);
+  if (!text) { stopTTS(); return; }
+
+  const utter = new SpeechSynthesisUtterance(text);
+  if (state.selectedVoice) utter.voice = state.selectedVoice;
+  utter.rate = state.rate;
+  utter.lang = state.selectedVoice?.lang || 'vi-VN';
+  state.utterance = utter;
+
+  // Highlight via onboundary (word boundary events)
+  let lastHighlighted = -1;
+  utter.onboundary = (e) => {
+    if (e.name !== 'word') return;
+    const charIdx = e.charIndex;
+    // Find which sentence this char belongs to
+    for (let k = offsets.length - 1; k >= 0; k--) {
+      if (charIdx >= offsets[k].start) {
+        const si = offsets[k].sentIdx;
+        if (si !== lastHighlighted) {
+          lastHighlighted = si;
+          state.sentenceIndex = si;
+          highlightSentence(si);
+          updateSentenceUI();
+          saveProgress();
+        }
+        break;
+      }
+    }
+  };
+
+  utter.onend = () => {
+    if (!state.isPlaying) return;
+    // Advance past all sentences in this chunk
+    const lastSent = offsets[offsets.length - 1];
+    state.sentenceIndex = lastSent ? lastSent.sentIdx + 1 : state.sentenceIndex + 1;
+    saveProgress();
+    playFromCurrent();
+  };
+
+  utter.onerror = (e) => {
+    if (e.error === 'interrupted') return;
+    // On error skip chunk and continue
+    const lastSent = offsets[offsets.length - 1];
+    state.sentenceIndex = lastSent ? lastSent.sentIdx + 1 : state.sentenceIndex + 1;
+    if (state.isPlaying) playFromCurrent();
+  };
+
+  // Initial highlight before speech starts
+  if (offsets[0]) {
+    highlightSentence(offsets[0].sentIdx);
+    updateSentenceUI();
+  }
+
+  speechSynthesis.speak(utter);
+}
+
+function highlightSentence(idx) {
+  readerText.querySelectorAll('.sentence.active').forEach(el => el.classList.remove('active'));
+  const el = readerText.querySelector(`.sentence[data-idx="${idx}"]`);
+  if (el) {
+    el.classList.add('active');
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
+function stopTTS() {
+  state.isPlaying = false;
+  speechSynthesis.cancel();
+  state.utterance = null;
+  btnPlay.innerHTML = '▶';
+  readerText.querySelectorAll('.sentence.active').forEach(el => el.classList.remove('active'));
+}
+
+function togglePlay() {
+  if (!state.chapters.length) return;
+
+  if (state.isPlaying) {
+    // Pause
+    state.isPlaying = false;
+    speechSynthesis.cancel();
+    btnPlay.innerHTML = '▶';
+  } else {
+    // Play
+    state.isPlaying = true;
+    btnPlay.innerHTML = '⏸';
+    playFromCurrent();
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+//  UI HELPERS
+// ══════════════════════════════════════════════════════════
+function updateSentenceUI() {
+  const total = state.sentences.length;
+  const cur   = state.sentenceIndex + 1;
+  sentenceLabel.textContent = `${Math.min(cur, total)} / ${total}`;
+  const pct = total > 0 ? ((cur - 1) / total * 100) : 0;
+  progressFill.style.width = pct + '%';
+}
+
+function enableControls() {
+  btnPlay.disabled = false;
+  btnStop.disabled = false;
+  btnPrev.disabled = state.chapterIndex === 0;
+  btnNext.disabled = state.chapterIndex === state.chapters.length - 1;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ══════════════════════════════════════════════════════════
+//  CONTROLS
+// ══════════════════════════════════════════════════════════
+btnPlay.addEventListener('click', togglePlay);
+
+btnStop.addEventListener('click', () => {
+  stopTTS();
+  state.sentenceIndex = 0;
+  updateSentenceUI();
+  saveProgress();
+  readerText.querySelectorAll('.sentence.active').forEach(el => el.classList.remove('active'));
+});
+
+btnPrev.addEventListener('click', () => {
+  if (state.chapterIndex <= 0) return;
+  stopTTS();
+  state.chapterIndex--;
+  state.sentenceIndex = 0;
+  renderChapter(state.chapterIndex, 0);
+  saveProgress();
+});
+
+btnNext.addEventListener('click', () => {
+  if (state.chapterIndex >= state.chapters.length - 1) return;
+  stopTTS();
+  state.chapterIndex++;
+  state.sentenceIndex = 0;
+  renderChapter(state.chapterIndex, 0);
+  saveProgress();
+});
+
+rateSlider.addEventListener('input', () => {
+  state.rate = parseFloat(rateSlider.value);
+  rateVal.textContent = state.rate.toFixed(1) + '×';
+  if (state.isPlaying) {
+    // Cancel current utterance; playFromCurrent will re-speak chunk from current sentence
+    speechSynthesis.cancel();
+    setTimeout(() => { if (state.isPlaying) playFromCurrent(); }, 80);
+  }
+});
+
+// Progress bar click
+$('progress-track').addEventListener('click', e => {
+  if (!state.sentences.length) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct  = (e.clientX - rect.left) / rect.width;
+  const newIdx = Math.floor(pct * state.sentences.length);
+  stopTTS();
+  state.sentenceIndex = Math.max(0, Math.min(newIdx, state.sentences.length - 1));
+  updateSentenceUI();
+  highlightSentence(state.sentenceIndex);
+  saveProgress();
+});
+
+// ══════════════════════════════════════════════════════════
+//  PROGRESS PERSISTENCE
+// ══════════════════════════════════════════════════════════
+function saveProgress() {
+  if (!state.bookId) return;
+  try {
+    localStorage.setItem(state.bookId, JSON.stringify({
+      chapterIndex:  state.chapterIndex,
+      sentenceIndex: state.sentenceIndex,
+    }));
+  } catch(e) {}
+}
+
+function loadProgress() {
+  if (!state.bookId) return null;
+  try {
+    const raw = localStorage.getItem(state.bookId);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+
+// ══════════════════════════════════════════════════════════
+//  KEYBOARD
+// ══════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); btnNext.click(); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); btnPrev.click(); }
+});
+
+// ══════════════════════════════════════════════════════════
+//  INIT — detect môi trường và hiện hướng dẫn phù hợp
+// ══════════════════════════════════════════════════════════
+
+(function detectEnvironment() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  const isInIframe = (() => {
+    try { return window.self !== window.top; } catch(e) { return true; }
+  })();
+
+  // Hiện banner iframe nếu đang nhúng trong Claude.ai hoặc tương tự
+  if (isInIframe) {
+    const warn = document.getElementById('iframe-warn');
+    if (warn) warn.style.display = 'block';
+  }
+
+  // Hiện hướng dẫn iOS nếu đang dùng iPhone/iPad
+  if (isIOS) {
+    const guide = document.getElementById('ios-guide');
+    if (guide) guide.style.display = 'block';
+  }
+})();
+
+// Voices được load tự động ở trên (tryLoadVoices + iosVoiceBootstrap)
+</script>
+</body>
+</html>
